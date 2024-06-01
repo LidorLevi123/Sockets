@@ -1,0 +1,261 @@
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>Socket.IO chat</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            position: relative;
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        form {
+            background: rgba(0, 0, 0, 0.15);
+            padding: 0.25rem;
+            margin: 3px;
+            position: sticky;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            height: 3rem;
+            backdrop-filter: blur(10px);
+            flex-shrink: 0;
+        }
+
+        input {
+            border: none;
+            padding: 0 1rem;
+            flex-grow: 1;
+            border-radius: 2rem;
+            margin: 0.25rem;
+        }
+
+        input:focus {
+            outline: none;
+        }
+
+        form>button {
+            background: #333;
+            border: none;
+            padding: 0 1rem;
+            margin: 0.25rem;
+            border-radius: 3px;
+            outline: none;
+            color: #fff;
+        }
+
+        .msg-list {
+            list-style-type: none;
+            margin: 0;
+            padding: 0;
+            flex: 1;
+        }
+
+        .msg-list>li {
+            padding: 0.5rem 1rem;
+        }
+
+        .msg-list>li:nth-child(odd) {
+            background: #efefef;
+        }
+
+        .msg-list>li:nth-child(even) {
+            background: #cecbcb;
+        }
+
+        .typer {
+            position: absolute;
+            top: -100%;
+            left: 50%;
+            translate: -50%
+        }
+
+        .hide {
+            display: none;
+        }
+
+        .sender {
+            font-weight: bold;
+            text-shadow: 1px 1px 1px rgba(0, 0, 0, 0.2);
+        }
+
+        .joiner {
+            background-color: lightblue;
+            text-shadow: 1px 1px 1px black;
+            padding: 0.2em;
+            border-radius: 0.3em;
+        }
+
+        .user-list {
+            position: fixed;
+            right: 5px;
+            bottom: 60px;
+            font-size: 1.3rem;
+
+            list-style-type: none;
+            margin: 0;
+            padding: 1em;
+            overflow: auto;
+
+            background-color: rgba(215, 70, 70, 0.733);
+            width: 200px;
+            height: 0;
+            opacity: 0;
+            transition: 0.5s;
+        }
+
+        .user-list>li:not(:last-child) {
+            margin-block-end: 0.1em;
+        }
+
+        .user-list.active {
+            height: 300px;
+            opacity: 1;
+        }
+
+        .btn-change-name {
+            align-self: start;
+            background: none;
+            border: none;
+            font-size: 1.1rem;
+            color: orange;
+            text-shadow: 1px 1px 0px black;
+        }
+
+        .btn-send {
+            background-color: orange;
+        }
+
+        button {
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <ul class="msg-list"></ul>
+    <button class="btn-change-name" onclick="onChangeName()">Change name</button>
+    <form onsubmit="onSubmitMsg(event)">
+        <input oninput="onFlashTyper()" autocomplete="off" />
+        <button class="btn-send">Send</button>
+        <h4 class="typer hide"><span></span> is typing...</h4>
+        <button class="btn-user-list" onclick="onToggleUsersList(this)">Show users</button>
+    </form>
+    <ul class="user-list"></ul>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io()
+        const gElInput = document.querySelector('input')
+        const gElMsgList = document.querySelector('.msg-list')
+        const gElUserList = document.querySelector('.user-list')
+
+        var isUserListOpen = false
+        var gTyperTimeout = null
+        var gUser = JSON.parse(sessionStorage.getItem('user')) || null
+        if (!gUser) {
+            gUser = {
+                name: prompt('What is your name?'),
+                color: getRandomColor(),
+                id: getRandomColor()
+            }
+            sessionStorage.setItem('user', JSON.stringify(gUser))
+        }
+
+        socket.emit('SET_USER', gUser)
+        socket.on('MSG_RECIEVE', addMsg)
+        socket.on('TYPER_RECIEVE', flashTyper)
+        socket.on('SET_USERS', renderUsers)
+        socket.on('ADD_MSGS', msgs => { msgs.forEach(addMsg) })
+
+        function onSubmitMsg(ev) {
+            ev.preventDefault()
+            if (gElInput.value) {
+                const msg = {
+                    txt: gElInput.value,
+                    by: gUser
+                }
+                socket.emit('MSG_SEND', msg)
+                gElInput.value = ''
+            }
+        }
+
+        function addMsg(msg) {
+            const strHTML = `
+                <li>
+                    <span class="sender" style="color: ${msg.by.color};">${msg.by.name}:</span> ${msg.txt}
+                </li>`
+            gElMsgList.innerHTML += strHTML
+            window.scrollTo(0, document.body.scrollHeight)
+        }
+
+        function onFlashTyper() {
+            if (!gElInput.value) return
+            socket.emit('TYPER_SEND')
+        }
+
+        function onChangeName() {
+            const name = prompt('What is your name?', gUser.name)
+            if (!name || name === gUser.name) return
+            const user = {
+                prevName: gUser.name,
+                newName: name
+            }
+            socket.emit('USER_CHANGE_NAME', user)
+            gUser.name = name
+            sessionStorage.setItem('user', JSON.stringify(gUser))
+        }
+
+        function flashTyper(typer) {
+            clearTimeout(gTyperTimeout)
+            const elTyper = document.querySelector('.typer')
+            elTyper.innerHTML = `<span style="color: ${typer.color}">${typer.name}</span> is typing...`
+
+            elTyper.classList.remove('hide')
+            gTyperTimeout = setTimeout(() => {
+                elTyper.classList.add('hide')
+            }, 1300)
+        }
+
+        function renderUsers(users) {
+            const strHTML = users.map(user => {
+                let style = ''
+                if (gUser.id === user.id) style = `style="color: ${user.color};"`
+                return `<li ${style}>${user.name}</li>`
+            }).join('')
+            gElUserList.innerHTML = strHTML
+        }
+
+        function onToggleUsersList(elBtn) {
+            isUserListOpen = !isUserListOpen
+            elBtn.innerText = isUserListOpen ? 'Hide users' : 'Show users'
+            gElUserList.classList.toggle('active')
+        }
+
+        function getRandomColor() {
+            var letters = '0123456789ABCDEF'
+            var color = '#'
+            for (var i = 0; i < 6; i++) {
+                color += letters[Math.floor(Math.random() * 16)]
+            }
+            return color
+        }
+
+        function getRandomInt(min, max) {
+            const minCeiled = Math.ceil(min)
+            const maxFloored = Math.floor(max)
+            return Math.floor(Math.random() * (maxFloored - minCeiled) + minCeiled) // The maximum is exclusive and the minimum is inclusive
+        }
+    </script>
+</body>
+
+</html>
